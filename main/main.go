@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	gobia "github.com/bialang/go-bia"
+	"github.com/bialang/gobia"
 )
 
 func main() {

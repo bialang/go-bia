@@ -1,3 +1,3 @@
-module github.com/bialang/go-bia
+module github.com/bialang/gobia
 
 go 1.12
