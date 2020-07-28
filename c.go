@@ -24,14 +24,14 @@ type argBridge struct {
 
 type Engine struct {
 	ptr   C.bia_engine_t
-	fptrs []*argBridge
+	fptrs map[string]*argBridge
 }
 
 type Member C.bia_member_t
 
 func NewEngine() (Engine, error) {
 	if ptr := C.bia_engine_new(); ptr != nil {
-		return Engine{ptr, nil}, nil
+		return Engine{ptr, make(map[string]*argBridge)}, nil
 	}
 
 	return Engine{}, errors.New("failed to create engine")
@@ -81,8 +81,8 @@ func (e *Engine) PutFunction(name string, function Function) error {
 	}
 
 	// to prevent GC from destroying the function
-	e.fptrs = append(e.fptrs, fptr)
-
+	e.fptrs[name] = fptr
+	
 	return nil
 }
 
