@@ -178,23 +178,67 @@ func (p *Parameters) invalidate() {
 	p.ptr = nil
 }
 
+func (m Member) getInt() (int64, error) {
+	var c C.longlong
+
+	if C.bia_member_cast_llong(m.ptr, &c) != 0 {
+		return 0, errors.New("failed to cast to int")
+	}
+
+	return int64(c), nil
+}
+
 func (m Member) Cast(out interface{}) error {
 	switch v := out.(type) {
 	case *int:
-		var c C.int
+		c, err := m.getInt()
+		*v = int(c)
 
-		if C.bia_member_cast_int(m.ptr, &c) != 0 {
-			return errors.New("failed to cast to int")
+		return err
+	case *int8:
+		c, err := m.getInt()
+		*v = int8(c)
+
+		return err
+	case *int16:
+		c, err := m.getInt()
+		*v = int16(c)
+
+		return err
+	case *int32:
+		c, err := m.getInt()
+		*v = int32(c)
+
+		return err
+	case *int64:
+		c, err := m.getInt()
+		*v = c
+
+		return err
+	case *string:
+		var c *C.char
+
+		if C.bia_member_cast_cstring(m.ptr, &c) != 0 {
+			return errors.New("failed to cast to string")
 		}
 
-		*v = int(c)
-	case *int8:
-	case *int16:
-	case *int32:
-	case *int64:
-	case *string:
+		*v = C.GoString(c)
 	case *float32:
+		var c C.double
+
+		if C.bia_member_cast_double(m.ptr, &c) != 0 {
+			return errors.New("failed to cast to double")
+		}
+
+		*v = float32(c)
 	case *float64:
+		var c C.double
+
+		if C.bia_member_cast_double(m.ptr, &c) != 0 {
+			return errors.New("failed to cast to double")
+		}
+
+		*v = float64(c)
 	default:
 		return errors.New("invalid type")
 	}
