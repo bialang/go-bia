@@ -1,22 +1,23 @@
 package gobia
 
-// #cgo LDFLAGS: -lbase -lbsl -lbvm -lcompiler -lcbia -lstdc++ -L /usr/local/lib/bia
+// #cgo LDFLAGS: -lbia
 // #include <bia/cbia.h>
 // #include <stdlib.h>
-// extern void functionBridge(bia_parameters_t params, void* arg);
+// extern bia_creation_t functionBridge(bia_parameters_t params, void* arg);
 import "C"
 
 import (
 	"errors"
+	"sync"
 	"unsafe"
 )
 
 type Parameters struct {
-	ptr C.bia_parameters_t
+	ptr  C.bia_parameters_t
 	lock sync.Locker
 }
 
-type Function func(*Parameters)
+type Function func(*Parameters) interface{}
 
 type argBridge struct {
 	function Function
@@ -27,7 +28,9 @@ type Engine struct {
 	fptrs map[string]*argBridge
 }
 
-type Member C.bia_member_t
+type Member struct {
+	ptr C.bia_member_t
+}
 
 func NewEngine() (Engine, error) {
 	if ptr := C.bia_engine_new(); ptr != nil {
@@ -49,14 +52,13 @@ func (e *Engine) UseBSL(args []string) error {
 	cargs := C.malloc(C.size_t(len(args)) * C.size_t(unsafe.Sizeof(uintptr(0))))
 	a := (*[1<<30 - 1]*C.char)(cargs)
 
-	defer func(){
-		for _, e := range a {
-			C.free(e)
+	defer func() {
+		for i := 0; i < len(args); i++ {
+			C.free(unsafe.Pointer(a[i]))
 		}
 
 		C.free(cargs)
 	}()
-
 
 	for i, e := range args {
 		a[i] = C.CString(e)
@@ -82,7 +84,7 @@ func (e *Engine) PutFunction(name string, function Function) error {
 
 	// to prevent GC from destroying the function
 	e.fptrs[name] = fptr
-	
+
 	return nil
 }
 
@@ -99,12 +101,41 @@ func (e *Engine) Run(code []byte) error {
 }
 
 //export functionBridge
-func functionBridge(params C.bia_parameters_t, arg unsafe.Pointer) {
+func functionBridge(params C.bia_parameters_t, arg unsafe.Pointer) C.bia_creation_t {
 	p := &Parameters{params, &sync.Mutex{}}
 
 	defer p.invalidate()
 
-	(*argBridge)(arg).function(p)
+	if val := (*argBridge)(arg).function(p); val != nil {
+		var result C.bia_creation_t = nil
+
+		switch v := val.(type) {
+		case int:
+			C.bia_create_integer(C.longlong(v), &result)
+		case int8:
+			C.bia_create_integer(C.longlong(v), &result)
+		case int16:
+			C.bia_create_integer(C.longlong(v), &result)
+		case int32:
+			C.bia_create_integer(C.longlong(v), &result)
+		case int64:
+			C.bia_create_integer(C.longlong(v), &result)
+		case float32:
+			C.bia_create_double(C.double(v), &result)
+		case float64:
+			C.bia_create_double(C.double(v), &result)
+		case string:
+			c := C.CString(v)
+
+			defer C.free(unsafe.Pointer(c))
+
+			C.bia_create_cstring(c, &result)
+		}
+
+		return result
+	}
+
+	return nil
 }
 
 func (p *Parameters) Size() (int, error) {
@@ -131,12 +162,12 @@ func (p *Parameters) At(index int) (Member, error) {
 	var s C.bia_member_t
 
 	if p.ptr == nil {
-		return 0, errors.New("invalid parameters")
+		return Member{}, errors.New("invalid parameters")
 	} else if C.bia_parameters_at(p.ptr, C.size_t(index), &s) != 0 {
-		return 0, errors.New("failed to get count")
+		return Member{}, errors.New("failed to get count")
 	}
 
-	return Member(s), nil
+	return Member{s}, nil
 }
 
 func (p *Parameters) invalidate() {
@@ -149,21 +180,21 @@ func (p *Parameters) invalidate() {
 
 func (m Member) Cast(out interface{}) error {
 	switch v := out.(type) {
-	case int*:
+	case *int:
 		var c C.int
-		
+
 		if C.bia_member_cast_int(m.ptr, &c) != 0 {
 			return errors.New("failed to cast to int")
 		}
 
-		*v = c
-	case int8*:
-	case int16*:
-	case int32*:
-	case int64*:
-	case string*:
-	case float32*:
-	case float64*:
+		*v = int(c)
+	case *int8:
+	case *int16:
+	case *int32:
+	case *int64:
+	case *string:
+	case *float32:
+	case *float64:
 	default:
 		return errors.New("invalid type")
 	}

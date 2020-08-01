@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/bialang/gobia"
 )
@@ -15,9 +16,11 @@ func main() {
 
 	defer engine.Close()
 
-	engine.UseBSL()
-	engine.PutFunction("foo", func(params *gobia.Parameters) {
+	engine.UseBSL(os.Args)
+	engine.PutFunction("foo", func(params *gobia.Parameters) interface{} {
 		fmt.Println("my function")
+
+		return 99
 	})
-	engine.Run([]byte(`foo()`))
+	engine.Run([]byte(`import io; io.print(foo())`))
 }
