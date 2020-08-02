@@ -16,11 +16,21 @@ func main() {
 
 	defer engine.Close()
 
+	i := 0
+
 	engine.UseBSL(os.Args)
 	engine.PutFunction("foo", func(params *gobia.Parameters) interface{} {
+		if m, e := params.Get("as"); e == nil {
+			var s string
+			m.Cast(&s)
+			fmt.Printf("%s? this is what i get?\n", s)
+		}
+
 		fmt.Println("my function")
 
-		return 99
+		i++
+
+		return i
 	})
-	engine.Run([]byte(`import io; io.print(foo())`))
+	engine.Run([]byte(`import io; io.print(foo(as="hi")); io.print(foo())`))
 }

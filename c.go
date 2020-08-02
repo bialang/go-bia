@@ -1,9 +1,18 @@
 package gobia
 
-// #cgo LDFLAGS: -lbia
-// #include <bia/cbia.h>
-// #include <stdlib.h>
-// extern bia_creation_t functionBridge(bia_parameters_t params, void* arg);
+/*
+#cgo LDFLAGS: -lbia
+#include <bia/cbia.h>
+#include <stdlib.h>
+#include <stdint.h>
+
+extern bia_creation_t functionBridge(bia_parameters_t params, void* arg);
+
+static int engine_put_function_bridge(bia_engine_t engine, const char* name, bia_function_t function, uintptr_t arg)
+{
+	return bia_engine_put_function(engine, name, function, (void*)arg);
+}
+*/
 import "C"
 
 import (
@@ -32,6 +41,7 @@ type Member struct {
 	ptr C.bia_member_t
 }
 
+// NewEngine creates a new Bia engine.
 func NewEngine() (Engine, error) {
 	if ptr := C.bia_engine_new(); ptr != nil {
 		return Engine{ptr, make(map[string]*argBridge)}, nil
@@ -40,6 +50,7 @@ func NewEngine() (Engine, error) {
 	return Engine{}, errors.New("failed to create engine")
 }
 
+// Close frees the resources associated with the engine.
 func (e *Engine) Close() error {
 	C.bia_engine_free(e.ptr)
 
@@ -48,6 +59,7 @@ func (e *Engine) Close() error {
 	return nil
 }
 
+// UseBSL binds Bia's standard library.
 func (e *Engine) UseBSL(args []string) error {
 	cargs := C.malloc(C.size_t(len(args)) * C.size_t(unsafe.Sizeof(uintptr(0))))
 	a := (*[1<<30 - 1]*C.char)(cargs)
@@ -71,6 +83,7 @@ func (e *Engine) UseBSL(args []string) error {
 	return nil
 }
 
+// PutFunction binds a Go function to Bia.
 func (e *Engine) PutFunction(name string, function Function) error {
 	cname := C.CString(name)
 
@@ -78,7 +91,7 @@ func (e *Engine) PutFunction(name string, function Function) error {
 
 	fptr := &argBridge{function}
 
-	if C.bia_engine_put_function(e.ptr, cname, (C.bia_function_t)(unsafe.Pointer(C.functionBridge)), unsafe.Pointer(fptr)) != 0 {
+	if C.engine_put_function_bridge(e.ptr, cname, (C.bia_function_t)(unsafe.Pointer(C.functionBridge)), C.uintptr_t(uintptr(unsafe.Pointer(fptr)))) != 0 {
 		return errors.New("failed to put function inplace")
 	}
 
@@ -164,6 +177,28 @@ func (p *Parameters) At(index int) (Member, error) {
 	if p.ptr == nil {
 		return Member{}, errors.New("invalid parameters")
 	} else if C.bia_parameters_at(p.ptr, C.size_t(index), &s) != 0 {
+		return Member{}, errors.New("failed to get count")
+	}
+
+	return Member{s}, nil
+}
+
+func (p *Parameters) Get(name string) (Member, error) {
+	p.lock.Lock()
+
+	defer p.lock.Unlock()
+
+	var s C.bia_member_t
+
+	if p.ptr == nil {
+		return Member{}, errors.New("invalid parameters")
+	}
+
+	cname := C.CString(name)
+
+	defer C.free(unsafe.Pointer(cname))
+
+	if C.bia_parameters_kwargs_find(p.ptr, cname, &s) != 0 {
 		return Member{}, errors.New("failed to get count")
 	}
 
