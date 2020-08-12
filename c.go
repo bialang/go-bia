@@ -17,6 +17,9 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -39,6 +42,10 @@ type Engine struct {
 
 type Member struct {
 	ptr C.bia_member_t
+}
+
+type Creation struct {
+	ptr C.bia_creation_t
 }
 
 // NewEngine creates a new Bia engine.
@@ -120,32 +127,9 @@ func functionBridge(params C.bia_parameters_t, arg unsafe.Pointer) C.bia_creatio
 	defer p.invalidate()
 
 	if val := (*argBridge)(arg).function(p); val != nil {
-		var result C.bia_creation_t = nil
+		result, _ := Create(val)
 
-		switch v := val.(type) {
-		case int:
-			C.bia_create_integer(C.longlong(v), &result)
-		case int8:
-			C.bia_create_integer(C.longlong(v), &result)
-		case int16:
-			C.bia_create_integer(C.longlong(v), &result)
-		case int32:
-			C.bia_create_integer(C.longlong(v), &result)
-		case int64:
-			C.bia_create_integer(C.longlong(v), &result)
-		case float32:
-			C.bia_create_double(C.double(v), &result)
-		case float64:
-			C.bia_create_double(C.double(v), &result)
-		case string:
-			c := C.CString(v)
-
-			defer C.free(unsafe.Pointer(c))
-
-			C.bia_create_cstring(c, &result)
-		}
-
-		return result
+		return result.ptr
 	}
 
 	return nil
@@ -223,6 +207,10 @@ func (m Member) getInt() (int64, error) {
 	return int64(c), nil
 }
 
+func (m Member) IsNull() bool {
+	return m.ptr == nil
+}
+
 func (m Member) Cast(out interface{}) error {
 	switch v := out.(type) {
 	case *int:
@@ -279,4 +267,100 @@ func (m Member) Cast(out interface{}) error {
 	}
 
 	return nil
+}
+
+func Create(value interface{}) (Creation, error) {
+	var result C.bia_creation_t
+
+	switch v := value.(type) {
+	case int:
+		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+			return Creation{}, errors.New("failed to create member")
+		}
+	case int8:
+		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+			return Creation{}, errors.New("failed to create member")
+		}
+	case int16:
+		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+			return Creation{}, errors.New("failed to create member")
+		}
+	case int32:
+		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+			return Creation{}, errors.New("failed to create member")
+		}
+	case int64:
+		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+			return Creation{}, errors.New("failed to create member")
+		}
+	case float32:
+		if C.bia_create_double(C.double(v), &result) != 0 {
+			return Creation{}, errors.New("failed to create member")
+		}
+	case float64:
+		if C.bia_create_double(C.double(v), &result) != 0 {
+			return Creation{}, errors.New("failed to create member")
+		}
+	case string:
+		c := C.CString(v)
+
+		defer C.free(unsafe.Pointer(c))
+
+		if C.bia_create_cstring(c, &result) != 0 {
+			return Creation{}, errors.New("failed to create member")
+		}
+	default:
+		if strings.HasPrefix(fmt.Sprintf("%T", value), "map[string]") {
+			if C.bia_create_dict(&result) != 0 {
+				return Creation{}, errors.New("failed to create member")
+			}
+
+			iter := reflect.ValueOf(value).MapRange()
+
+			for iter.Next() {
+				(Creation{result}).Put(iter.Key().Interface().(string), iter.Value().Interface())
+			}
+		} else {
+			return Creation{}, errors.New("invalid type")
+		}
+	}
+
+	return Creation{result}, nil
+}
+
+func (c Creation) Put(key string, value interface{}) error {
+	k, err := Create(key)
+
+	if err != nil {
+		return err
+	}
+
+	defer k.Close()
+
+	v, err := Create(value)
+
+	if err != nil {
+		return err
+	}
+
+	defer v.Close()
+
+	km := k.Release()
+	vm := v.Release()
+
+	if C.bia_creation_dict_put(c.ptr, km.ptr, vm.ptr) != 0 {
+		return errors.New("failed to put value")
+	}
+
+	return nil
+}
+
+func (c Creation) Close() error {
+	C.bia_creation_free(c.ptr)
+
+	return nil
+}
+
+func (c Creation) Release() Member {
+	return Member{C.bia_creation_release(c.ptr)}
 }
