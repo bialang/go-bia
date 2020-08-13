@@ -44,6 +44,10 @@ type Member struct {
 	ptr C.bia_member_t
 }
 
+type GC struct {
+	ptr C.bia_gc_t
+}
+
 type Creation struct {
 	ptr C.bia_creation_t
 }
@@ -64,6 +68,10 @@ func (e *Engine) Close() error {
 	*e = Engine{}
 
 	return nil
+}
+
+func (e *Engine) GetGC() GC {
+	return GC{C.bia_engine_get_gc(e.ptr)}
 }
 
 // UseBSL binds Bia's standard library.
@@ -108,6 +116,34 @@ func (e *Engine) PutFunction(name string, function Function) error {
 	return nil
 }
 
+func (e *Engine) Put(name string, value interface{}) error {
+	gc := e.GetGC()
+	n, err := gc.Create(name)
+
+	if err != nil {
+		return err
+	}
+
+	defer n.Close()
+
+	v, err := gc.Create(value)
+
+	if err != nil {
+		return err
+	}
+
+	defer v.Close()
+
+	if C.bia_engine_put(e.ptr, n.Peek().ptr, v.Peek().ptr) != 0 {
+		return errors.New("failed to put value")
+	}
+
+	n.StartMonitoring()
+	v.StartMonitoring()
+
+	return nil
+}
+
 func (e *Engine) Run(code []byte) error {
 	ccode := C.CBytes(code)
 
@@ -127,7 +163,8 @@ func functionBridge(params C.bia_parameters_t, arg unsafe.Pointer) C.bia_creatio
 	defer p.invalidate()
 
 	if val := (*argBridge)(arg).function(p); val != nil {
-		result, _ := Create(val)
+		gc, _ := ActiveGC()
+		result, _ := gc.Create(val)
 
 		return result.ptr
 	}
@@ -269,36 +306,44 @@ func (m Member) Cast(out interface{}) error {
 	return nil
 }
 
-func Create(value interface{}) (Creation, error) {
+func ActiveGC() (GC, error) {
+	if ptr := C.bia_active_gc(); ptr != nil {
+		return GC{ptr}, nil
+	}
+
+	return GC{}, errors.New("no gc active")
+}
+
+func (g GC) Create(value interface{}) (Creation, error) {
 	var result C.bia_creation_t
 
 	switch v := value.(type) {
 	case int:
-		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+		if C.bia_create_llong(g.ptr, C.longlong(v), &result) != 0 {
 			return Creation{}, errors.New("failed to create member")
 		}
 	case int8:
-		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+		if C.bia_create_llong(g.ptr, C.longlong(v), &result) != 0 {
 			return Creation{}, errors.New("failed to create member")
 		}
 	case int16:
-		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+		if C.bia_create_llong(g.ptr, C.longlong(v), &result) != 0 {
 			return Creation{}, errors.New("failed to create member")
 		}
 	case int32:
-		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+		if C.bia_create_llong(g.ptr, C.longlong(v), &result) != 0 {
 			return Creation{}, errors.New("failed to create member")
 		}
 	case int64:
-		if C.bia_create_llong(C.longlong(v), &result) != 0 {
+		if C.bia_create_llong(g.ptr, C.longlong(v), &result) != 0 {
 			return Creation{}, errors.New("failed to create member")
 		}
 	case float32:
-		if C.bia_create_double(C.double(v), &result) != 0 {
+		if C.bia_create_double(g.ptr, C.double(v), &result) != 0 {
 			return Creation{}, errors.New("failed to create member")
 		}
 	case float64:
-		if C.bia_create_double(C.double(v), &result) != 0 {
+		if C.bia_create_double(g.ptr, C.double(v), &result) != 0 {
 			return Creation{}, errors.New("failed to create member")
 		}
 	case string:
@@ -306,19 +351,19 @@ func Create(value interface{}) (Creation, error) {
 
 		defer C.free(unsafe.Pointer(c))
 
-		if C.bia_create_cstring(c, &result) != 0 {
-			return Creation{}, errors.New("failed to create member")
+		if C.bia_create_cstring(g.ptr, c, &result) != 0 {
+			return Creation{}, errors.New("failed to screate member")
 		}
 	default:
 		if strings.HasPrefix(fmt.Sprintf("%T", value), "map[string]") {
-			if C.bia_create_dict(&result) != 0 {
+			if C.bia_create_dict(g.ptr, &result) != 0 {
 				return Creation{}, errors.New("failed to create member")
 			}
 
 			iter := reflect.ValueOf(value).MapRange()
 
 			for iter.Next() {
-				(Creation{result}).Put(iter.Key().Interface().(string), iter.Value().Interface())
+				(Creation{result}).Put(g, iter.Key().Interface().(string), iter.Value().Interface())
 			}
 		} else {
 			return Creation{}, errors.New("invalid type")
@@ -328,8 +373,8 @@ func Create(value interface{}) (Creation, error) {
 	return Creation{result}, nil
 }
 
-func (c Creation) Put(key string, value interface{}) error {
-	k, err := Create(key)
+func (c Creation) Put(gc GC, key string, value interface{}) error {
+	k, err := gc.Create(key)
 
 	if err != nil {
 		return err
@@ -337,7 +382,7 @@ func (c Creation) Put(key string, value interface{}) error {
 
 	defer k.Close()
 
-	v, err := Create(value)
+	v, err := gc.Create(value)
 
 	if err != nil {
 		return err
@@ -345,12 +390,12 @@ func (c Creation) Put(key string, value interface{}) error {
 
 	defer v.Close()
 
-	km := k.Release()
-	vm := v.Release()
-
-	if C.bia_creation_dict_put(c.ptr, km.ptr, vm.ptr) != 0 {
+	if C.bia_creation_dict_put(c.ptr, k.Peek().ptr, v.Peek().ptr) != 0 {
 		return errors.New("failed to put value")
 	}
+
+	k.StartMonitoring()
+	v.StartMonitoring()
 
 	return nil
 }
@@ -361,6 +406,14 @@ func (c Creation) Close() error {
 	return nil
 }
 
-func (c Creation) Release() Member {
-	return Member{C.bia_creation_release(c.ptr)}
+func (c Creation) Peek() Member {
+	return Member{C.bia_creation_peek(c.ptr)}
+}
+
+func (c Creation) StartMonitoring() error {
+	if C.bia_creation_start_monitoring(c.ptr) != 0 {
+		return errors.New("failed to start monitoring")
+	}
+
+	return nil
 }

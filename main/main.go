@@ -19,6 +19,7 @@ func main() {
 	i := 0
 
 	engine.UseBSL(os.Args)
+	engine.Put("hey", "ho")
 	engine.PutFunction("foo", func(params *gobia.Parameters) interface{} {
 		if m, e := params.Get("as"); e == nil {
 			var s string
@@ -32,5 +33,5 @@ func main() {
 
 		return i
 	})
-	engine.Run([]byte(`import io; io.print(foo(as="hi")); io.print(foo())`))
+	engine.Run([]byte(`import io; io.print(foo(as="hi")); io.print(foo()); io.print(hey)`))
 }
